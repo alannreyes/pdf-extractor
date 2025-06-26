@@ -24,6 +24,12 @@ coverage
 .env.test.local
 .env.production.local
 config-corrected.env
+production.env
+
+# Test files and logs
+test_results_*.log
+*.test.pdf
+large_file.pdf
 
 # Build outputs
 dist/
