@@ -7,7 +7,8 @@ import { PdfParserService } from './services/pdf-parser.service';
 import { CacheService } from './services/cache.service';
 import { 
   ProcessClaimsResponse, 
-  ProcessClaimsData, 
+  ConsolidatedSummaries,
+  ProcessingStats,
   HealthCheckResponse, 
   ClaimsConfigResponse 
 } from './dto/process-claims-response.dto';
@@ -34,7 +35,7 @@ export class ClaimsService {
     const startTime = Date.now();
     const errors: string[] = [];
     
-    this.logger.log(`Iniciando procesamiento de ${files.length} archivos`);
+    this.logger.log(`🚀 Iniciando procesamiento consolidado de ${files.length} archivos`);
 
     try {
       // 1. Obtener configuración de BD (con cache)
@@ -42,23 +43,42 @@ export class ClaimsService {
       
       // 2. Crear mapa de archivos recibidos
       const filesMap = new Map(files.map(f => [f.originalname, f]));
-      this.logger.log(`Archivos recibidos: ${Array.from(filesMap.keys()).join(', ')}`);
+      this.logger.log(`📁 Archivos recibidos: ${Array.from(filesMap.keys()).join(', ')}`);
       
-      // 3. Inicializar resultado con campos vacíos
-      const result: ProcessClaimsData = {} as ProcessClaimsData;
-      claimConfigs.forEach(config => {
-        result[config.fieldname] = "";
-      });
+      // 3. Inicializar summaries consolidados
+      const summaries: ConsolidatedSummaries = {
+        claim_acknowledgment: "",
+        coverage_determination: "",
+        demand_letter: ""
+      };
       
-      // 4. Procesar archivos en paralelo (solo los que están presentes)
-      const processingPromises = claimConfigs.map(async (config) => {
-        const file = filesMap.get(config.filename);
+      // 4. Mapeo de archivos a campos consolidados
+      const fileToFieldMap = {
+        'CLAIM_ACK_LETTER.pdf': 'claim_acknowledgment',
+        'COVERAGE_DETERMINATION.pdf': 'coverage_determination', 
+        'DEMAND_LETTER.pdf': 'demand_letter'
+      };
+      
+      // 5. Identificar archivos presentes vs faltantes
+      const presentFiles = claimConfigs.filter(config => filesMap.has(config.filename));
+      const missingFiles = claimConfigs.filter(config => !filesMap.has(config.filename));
+      
+      if (missingFiles.length > 0) {
+        this.logger.log(`📄 Archivos omitidos (no proporcionados): ${missingFiles.map(c => c.filename).join(', ')}`);
+      }
+      
+      if (presentFiles.length > 0) {
+        this.logger.log(`🔄 Procesando archivos: ${presentFiles.map(c => c.filename).join(', ')}`);
+      }
+      
+      // 6. Procesar archivos en paralelo (SOLO los que están presentes)
+      const processingPromises = presentFiles.map(async (config) => {
+          const file = filesMap.get(config.filename);
+          const consolidatedField = fileToFieldMap[config.filename];
+          
+          // Ya sabemos que el archivo existe por el filter anterior
         
-        if (!file) {
-          errors.push(`${config.filename}: File not provided`);
-          this.logger.warn(`Archivo faltante: ${config.filename}`);
-          return { fieldname: config.fieldname, result: "", success: false };
-        }
+        const fileStartTime = Date.now();
         
         try {
           // Extraer texto del PDF
@@ -72,52 +92,82 @@ export class ClaimsService {
           // Llamar a OpenAI con reintentos
           const summary = await this.callOpenAIWithRetries(config.prompt, pdfText);
           
-          this.logger.log(`Procesado exitosamente: ${config.filename} -> ${config.fieldname}`);
-          return { fieldname: config.fieldname, result: summary, success: true };
+          const fileProcessingTime = Date.now() - fileStartTime;
+          
+          this.logger.log(`✅ Procesado exitosamente: ${config.filename} (${fileProcessingTime}ms)`);
+          return { 
+            filename: config.filename,
+            fieldname: consolidatedField, 
+            result: summary, 
+            success: true,
+            processingTime: fileProcessingTime
+          };
         } catch (error) {
-          const errorMsg = `${config.filename}: ${error.message}`;
+          const errorMsg = `❌ ${config.filename}: ${error.message}`;
           errors.push(errorMsg);
           this.logger.error(errorMsg);
-          return { fieldname: config.fieldname, result: "", success: false };
+          return { 
+            filename: config.filename,
+            fieldname: consolidatedField, 
+            result: "", 
+            success: false,
+            processingTime: Date.now() - fileStartTime
+          };
         }
       });
 
       // Esperar a que todos los procesamientos terminen
       const results = await Promise.allSettled(processingPromises);
-      let processedCount = 0;
+      let successfulExtractions = 0;
+      let totalFileTime = 0;
 
-      // Procesar resultados
+      // Procesar resultados y consolidar
       results.forEach((promiseResult, index) => {
         if (promiseResult.status === 'fulfilled') {
-          const { fieldname, result: summary, success } = promiseResult.value;
-          result[fieldname] = summary;
-          if (success) processedCount++;
+          const { fieldname, result: summary, success, processingTime } = promiseResult.value;
+          
+          if (fieldname && summaries.hasOwnProperty(fieldname)) {
+            summaries[fieldname] = summary;
+          }
+          
+          if (success) {
+            successfulExtractions++;
+          }
+          
+          totalFileTime += processingTime;
         } else {
-          // Error en la promesa misma
-          const config = claimConfigs[index];
-          this.logger.error(`Error crítico procesando ${config.filename}:`, promiseResult.reason);
-          errors.push(`${config.filename}: Error crítico en procesamiento`);
-          result[config.fieldname] = "";
+          // Error en la promesa misma - USAR presentFiles[index] en lugar de claimConfigs[index]
+          const config = presentFiles[index]; // ✅ CORREGIDO: Usar el índice correcto
+          this.logger.error(`💥 Error crítico procesando ${config.filename}:`, promiseResult.reason);
+          errors.push(`💥 ${config.filename}: Error crítico en procesamiento`);
         }
       });
       
-      const processingTime = Date.now() - startTime;
+      const totalProcessingTime = Date.now() - startTime;
+      const averageTimePerFile = claimConfigs.length > 0 ? Math.round(totalFileTime / claimConfigs.length) : 0;
       
-      this.logger.log(`Procesamiento completado en ${processingTime}ms. Archivos procesados: ${processedCount}/${claimConfigs.length}`);
+      // Estadísticas consolidadas (solo archivos procesados)
+      const filesProcessed = results.length; // Solo los archivos que se intentaron procesar
+      const processingStats: ProcessingStats = {
+        files_processed: filesProcessed,
+        total_time_ms: totalProcessingTime,
+        average_time_per_file: filesProcessed > 0 ? Math.round(totalFileTime / filesProcessed) : 0,
+        successful_extractions: successfulExtractions,
+        failed_extractions: filesProcessed - successfulExtractions
+      };
+      
+      this.logger.log(`🎉 Procesamiento consolidado completado en ${totalProcessingTime}ms. Éxitos: ${successfulExtractions}/${filesProcessed}`);
       
       return {
         success: true,
-        data: result,
-        metadata: {
-          processed_files: processedCount,
-          total_expected: claimConfigs.length,
-          processing_time_ms: processingTime,
-          errors: errors.length > 0 ? errors : undefined
-        }
+        timestamp: new Date().toISOString(),
+        summaries,
+        processing_stats: processingStats,
+        errors: errors.length > 0 ? errors : undefined
       };
       
     } catch (error) {
-      this.logger.error('Error crítico en procesamiento:', error.message);
+      this.logger.error('💥 Error crítico en procesamiento:', error.message);
       throw error; // Esto resultará en Error 500
     }
   }

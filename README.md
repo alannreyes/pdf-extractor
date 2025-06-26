@@ -24,6 +24,32 @@ POST /api/process-claims
 Content-Type: multipart/form-data
 ```
 
+**Respuesta Consolidada (Nuevo Formato):**
+```json
+{
+  "success": true,
+  "timestamp": "2025-01-26T21:30:45.123Z",
+  "summaries": {
+    "claim_acknowledgment": "On November 4, 2024, Defendant acknowledged...",
+    "coverage_determination": "On December 9, 2024 Defendant determined...",
+    "demand_letter": "On January 17, 2025, Plaintiff provided..."
+  },
+  "processing_stats": {
+    "files_processed": 3,
+    "total_time_ms": 8750,
+    "average_time_per_file": 2917,
+    "successful_extractions": 3,
+    "failed_extractions": 0
+  },
+  "errors": []
+}
+```
+
+**Archivos Esperados:**
+- `CLAIM_ACK_LETTER.pdf` → `claim_acknowledgment`
+- `COVERAGE_DETERMINATION.pdf` → `coverage_determination`
+- `DEMAND_LETTER.pdf` → `demand_letter`
+
 ### Health Check
 ```
 GET /api/health

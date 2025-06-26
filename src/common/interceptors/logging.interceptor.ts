@@ -48,10 +48,10 @@ export class LoggingInterceptor implements NestInterceptor {
             `← ${method} ${url} ${statusCode} - ${duration}ms`
           );
 
-          // Log adicional para endpoint principal
-          if (url.includes('process-claims') && data?.metadata) {
+          // Log adicional para endpoint principal (formato consolidado)
+          if (url.includes('process-claims') && data?.processing_stats) {
             this.logger.log(
-              `📊 Procesamiento: ${data.metadata.processed_files}/${data.metadata.total_expected} archivos en ${data.metadata.processing_time_ms}ms`
+              `📊 Procesamiento consolidado: ${data.processing_stats.successful_extractions}/${data.processing_stats.files_processed} archivos exitosos en ${data.processing_stats.total_time_ms}ms`
             );
           }
         },

@@ -118,9 +118,9 @@ run_test "Fake PDF file" \
 # TEST 6: Múltiples archivos fake
 create_test_file "COVERAGE_DETERMINATION.pdf" "Contenido fake"
 create_test_file "DEMAND_LETTER.pdf" "Contenido fake"
-run_test "Multiple fake PDF files" \
+run_test "Multiple fake PDF files (Consolidated Format)" \
     "curl -s -X POST '$API_URL/process-claims' -F 'files=@CLAIM_ACK_LETTER.pdf' -F 'files=@COVERAGE_DETERMINATION.pdf' -F 'files=@DEMAND_LETTER.pdf'" \
-    ".results"
+    ".summaries"
 
 # TEST 7: Archivo muy grande (simulado)
 if command -v dd &> /dev/null; then
