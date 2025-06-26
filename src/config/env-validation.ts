@@ -14,18 +14,20 @@ export class EnvValidation {
       warnings.push('OPENAI_API_KEY no parece ser válida (debería empezar con sk-)');
     }
 
-    // Validar configuración de base de datos
-    if (!process.env.DB_HOST) {
-      errors.push('DB_HOST es requerida');
-    }
-    if (!process.env.DB_USERNAME) {
-      errors.push('DB_USERNAME es requerida');
-    }
-    if (!process.env.DB_PASSWORD) {
-      errors.push('DB_PASSWORD es requerida');
-    }
-    if (!process.env.DB_DATABASE && !process.env.DB_NAME) {
-      errors.push('DB_DATABASE o DB_NAME es requerida');
+    // Validar configuración de base de datos (solo si no hay DATABASE_URL)
+    if (!process.env.DATABASE_URL) {
+      if (!process.env.DB_HOST) {
+        errors.push('DB_HOST es requerida (o proporciona DATABASE_URL)');
+      }
+      if (!process.env.DB_USERNAME) {
+        errors.push('DB_USERNAME es requerida (o proporciona DATABASE_URL)');
+      }
+      if (!process.env.DB_PASSWORD) {
+        errors.push('DB_PASSWORD es requerida (o proporciona DATABASE_URL)');
+      }
+      if (!process.env.DB_DATABASE && !process.env.DB_NAME) {
+        errors.push('DB_DATABASE o DB_NAME es requerida (o proporciona DATABASE_URL)');
+      }
     }
 
     // Validar modelo OpenAI
