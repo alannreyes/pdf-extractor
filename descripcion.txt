@@ -1,0 +1,310 @@
+# DESCRIPCIÓN COMPLETA DEL PROYECTO - Backend NestJS para Procesamiento de PDFs con IA
+
+## RESUMEN EJECUTIVO
+Backend en NestJS que procesa archivos PDF usando OpenAI GPT-4o-mini según configuraciones almacenadas en una base de datos MySQL existente, devolviendo un JSON consolidado con los resultados del procesamiento.
+
+## ARQUITECTURA Y TECNOLOGÍAS
+
+### Stack Tecnológico
+- **Framework**: NestJS (última versión estable)
+- **Lenguaje**: TypeScript
+- **Base de datos**: MySQL (EXISTENTE - NO CREAR)
+- **IA**: OpenAI GPT-4.1 Mini (configurable via variable de entorno)
+- **Deployment**: EasyPanel en servidor Linux
+- **Conexión DB**: mysql://mysql:27d9IyP3Tyg19WUL8a6T@automate_mysql:3306/axioma
+- **Nota importante**: No hay firewall entre la aplicación y la base de datos (mismo servidor)
+
+### Variables de Entorno Requeridas
+```
+# Base de datos (conexión a BD existente)
+DB_HOST=automate_mysql
+DB_PORT=3306
+DB_USERNAME=mysql
+DB_PASSWORD=27d9IyP3Tyg19WUL8a6T
+DB_DATABASE=axioma
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_TIMEOUT=30000
+OPENAI_MAX_RETRIES=2
+
+# Aplicación
+PORT=3000
+NODE_ENV=production
+MAX_FILE_SIZE=10485760  # 10MB
+```
+
+## BASE DE DATOS EXISTENTE
+
+### Tabla: claimextract (YA EXISTE CON DATOS)
+**IMPORTANTE**: Esta tabla YA EXISTE, NO CREAR, solo mapear con TypeORM
+
+Estructura:
+```sql
+claimextract:
+ - id: INT PRIMARY KEY
+ - filename: VARCHAR(255)
+ - prompt: TEXT
+ - example: TEXT
+ - fieldname: VARCHAR(255)
+ - created_at: DATETIME
+```
+
+Registros actuales:
+- filename: CLAIM_ACK_LETTER.pdf → fieldname: claim_ack_letter_summary
+- filename: COVERAGE_DETERMINATION.pdf → fieldname: cov_det_summary
+- filename: DEMAND_LETTER.pdf → fieldname: demand_letter_summary
+
+## FUNCIONALIDAD PRINCIPAL
+
+### Endpoint Principal
+```
+POST /api/process-claims
+Content-Type: multipart/form-data
+```
+
+**Parámetros**:
+- Archivos PDF (0 a 3 archivos)
+- Los nombres de archivo deben coincidir EXACTAMENTE con los registrados en la BD (case-sensitive)
+
+### Flujo de Procesamiento Detallado
+
+1. **Recepción de Archivos**
+   - Aceptar request con 0, 1, 2 o 3 archivos PDF
+   - NO validar cantidad mínima de archivos
+   - Validar tamaño máximo (10MB por archivo)
+   - Validar MIME type (solo PDFs)
+
+2. **Consulta a Base de Datos**
+   - Ejecutar: `SELECT * FROM claimextract`
+   - NO modificar la tabla existente
+   - Cachear resultados para optimización
+
+3. **Procesamiento Individual**
+   Para cada registro obtenido de la BD:
+   - Verificar si el archivo correspondiente fue enviado
+   - Si existe:
+     * Extraer texto del PDF usando pdf-parse
+     * Enviar a OpenAI con el prompt específico del registro
+     * Mapear respuesta al campo indicado en fieldname
+   - Si no existe o hay error:
+     * Asignar cadena vacía ""
+
+4. **Construcción de Respuesta**
+   - Crear JSON con TODOS los campos definidos en la columna fieldname
+   - Mantener estructura fija independiente de archivos recibidos
+
+### Integración con OpenAI
+
+**Configuración**:
+- Modelo: gpt-4.1-mini (configurable)
+- API Key: Variable de entorno OPENAI_API_KEY
+- Timeout: 30 segundos por request
+- Reintentos: 2 intentos en caso de fallo
+
+**Estructura del Request a OpenAI**:
+```json
+{
+  "model": "gpt-4.1-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a legal document analyzer. Follow the format instructions exactly."
+    },
+    {
+      "role": "user",
+      "content": "[PROMPT_FROM_DB]\n\nDocument content:\n[EXTRACTED_PDF_TEXT]"
+    }
+  ],
+  "temperature": 0.3,
+  "max_tokens": 500
+}
+```
+
+## MANEJO DE ERRORES
+
+### Política de Errores
+**CRÍTICO**: Todos los errores resultan en campo vacío "" sin interrumpir el procesamiento:
+- Archivo no enviado: Campo = ""
+- PDF corrupto o ilegible: Campo = ""
+- Error de extracción de texto: Campo = ""
+- Timeout de OpenAI: Campo = ""
+- Error de API de OpenAI: Campo = ""
+- Archivo sin registro en BD: Se ignora (no se procesa)
+- **ÚNICA EXCEPCIÓN**: Error de conexión a BD: Error 500
+
+### Logging Requerido
+- Info: Archivos recibidos
+- Info: Procesamiento iniciado/completado
+- Warning: Archivos faltantes
+- Error: Fallos de procesamiento (con detalles)
+
+## ESTRUCTURA DE RESPUESTAS
+
+### Respuesta Exitosa (200 OK)
+```json
+{
+  "success": true,
+  "data": {
+    "claim_ack_letter_summary": "On November 4, 2024, Defendant acknowledged the claim...",
+    "cov_det_summary": "On November 15, 2024, Defendant, based on its limited inspection...",
+    "demand_letter_summary": ""
+  },
+  "metadata": {
+    "processed_files": 2,
+    "total_expected": 3,
+    "processing_time_ms": 4523
+  }
+}
+```
+
+### Respuesta con Errores Parciales (200 OK)
+```json
+{
+  "success": true,
+  "data": {
+    "claim_ack_letter_summary": "",
+    "cov_det_summary": "",
+    "demand_letter_summary": ""
+  },
+  "metadata": {
+    "processed_files": 0,
+    "total_expected": 3,
+    "processing_time_ms": 1200,
+    "errors": [
+      "CLAIM_ACK_LETTER.pdf: File not provided",
+      "COVERAGE_DETERMINATION.pdf: OpenAI API timeout",
+      "DEMAND_LETTER.pdf: File not provided"
+    ]
+  }
+}
+```
+
+### Error Fatal (500 Internal Server Error)
+Solo si no se puede conectar a la BD:
+```json
+{
+  "success": false,
+  "error": "Database connection failed",
+  "message": "Unable to process request"
+}
+```
+
+## ENDPOINTS ADICIONALES
+
+### Health Check
+```
+GET /api/health
+Response: { 
+  "status": "ok", 
+  "db": "connected", 
+  "timestamp": "2025-06-26T10:00:00Z" 
+}
+```
+
+### Verificar Configuración
+```
+GET /api/claims/config
+Response: { 
+  "expected_files": ["CLAIM_ACK_LETTER.pdf", "COVERAGE_DETERMINATION.pdf", "DEMAND_LETTER.pdf"],
+  "fields": ["claim_ack_letter_summary", "cov_det_summary", "demand_letter_summary"]
+}
+```
+
+## DEPENDENCIAS REQUERIDAS
+
+```json
+{
+  "dependencies": {
+    "@nestjs/common": "^10.x",
+    "@nestjs/core": "^10.x",
+    "@nestjs/platform-express": "^10.x",
+    "@nestjs/typeorm": "^10.x",
+    "mysql2": "^3.x",
+    "typeorm": "^0.3.x",
+    "multer": "^1.4.x",
+    "pdf-parse": "^1.1.x",
+    "openai": "^4.x",
+    "class-validator": "^0.14.x",
+    "class-transformer": "^0.5.x"
+  }
+}
+```
+
+## CONSIDERACIONES DE SEGURIDAD
+
+- Validar tamaño máximo de archivos (10MB)
+- Sanitizar nombres de archivo
+- No exponer errores internos al cliente
+- Validar que solo se procesen PDFs (MIME type)
+- No almacenar PDFs después del procesamiento
+- Limpiar buffers de memoria después de uso
+- Usar synchronize: false en TypeORM para producción
+
+## CASOS DE PRUEBA REQUERIDOS
+
+1. **Sin archivos**: POST vacío → JSON con 3 campos vacíos
+2. **1 archivo**: Solo CLAIM_ACK_LETTER.pdf → 1 campo con data, 2 vacíos
+3. **PDF corrupto**: Manejar error → campo vacío correspondiente
+4. **OpenAI timeout**: Reintentar 2 veces → si falla, campo vacío
+5. **3 archivos válidos**: Procesamiento completo exitoso
+6. **Archivo extra no registrado**: Se ignora, no afecta respuesta
+7. **BD caída**: Error 500 inmediato
+
+## ESTRUCTURA DE PROYECTO SUGERIDA
+
+```
+src/
+├── app.module.ts
+├── main.ts
+├── config/
+│   ├── database.config.ts
+│   └── openai.config.ts
+├── modules/
+│   └── claims/
+│       ├── claims.module.ts
+│       ├── claims.controller.ts
+│       ├── claims.service.ts
+│       ├── dto/
+│       │   └── process-claims-response.dto.ts
+│       ├── entities/
+│       │   └── claim-extract.entity.ts
+│       └── services/
+│           ├── openai.service.ts
+│           └── pdf-parser.service.ts
+└── common/
+    ├── filters/
+    │   └── http-exception.filter.ts
+    └── interceptors/
+        └── logging.interceptor.ts
+```
+
+## NOTAS IMPORTANTES DE IMPLEMENTACIÓN
+
+- **NO crear migraciones**: La tabla ya existe
+- **NO modificar la estructura de la BD**: Solo lectura
+- **Sincronización TypeORM**: Usar synchronize: false en producción
+- **Validación de archivos**: Por nombre exacto, case-sensitive
+- **Orden de respuesta**: Siempre el mismo orden de campos en JSON
+- **Procesamiento**: Puede ser paralelo para mejor performance
+- **Memoria**: Limpiar buffers después de procesar cada PDF
+- **Modelo OpenAI**: Configurable mediante variable de entorno OPENAI_MODEL (por defecto gpt-4.1-mini)
+
+## EJEMPLOS DE USO
+
+```bash
+# Con 2 archivos
+curl -X POST http://localhost:3000/api/process-claims \
+  -F "files=@CLAIM_ACK_LETTER.pdf" \
+  -F "files=@COVERAGE_DETERMINATION.pdf"
+
+# Sin archivos
+curl -X POST http://localhost:3000/api/process-claims
+
+# Con todos los archivos
+curl -X POST http://localhost:3000/api/process-claims \
+  -F "files=@CLAIM_ACK_LETTER.pdf" \
+  -F "files=@COVERAGE_DETERMINATION.pdf" \
+  -F "files=@DEMAND_LETTER.pdf"
+``` 
