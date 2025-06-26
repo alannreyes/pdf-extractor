@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { ClaimExtract } from './entities/claim-extract.entity';
 import { OpenAIService } from './services/openai.service';
 import { PdfParserService } from './services/pdf-parser.service';
+import { CacheService } from './services/cache.service';
 import { 
   ProcessClaimsResponse, 
   ProcessClaimsData, 
@@ -14,14 +15,20 @@ import {
 @Injectable()
 export class ClaimsService {
   private readonly logger = new Logger(ClaimsService.name);
-  private claimConfigsCache: ClaimExtract[] = null;
+  private static readonly CACHE_KEY_CONFIGS = 'claim_configs';
 
   constructor(
     @InjectRepository(ClaimExtract)
     private readonly claimExtractRepository: Repository<ClaimExtract>,
     private readonly openaiService: OpenAIService,
     private readonly pdfParserService: PdfParserService,
-  ) {}
+    private readonly cacheService: CacheService,
+  ) {
+    // Iniciar limpieza periódica del cache
+    setInterval(() => {
+      this.cacheService.cleanup();
+    }, 60000); // Cada minuto
+  }
 
   async processClaimsFiles(files: Express.Multer.File[]): Promise<ProcessClaimsResponse> {
     const startTime = Date.now();
@@ -43,15 +50,14 @@ export class ClaimsService {
         result[config.fieldname] = "";
       });
       
-      // 4. Procesar cada configuración
-      let processedCount = 0;
-      for (const config of claimConfigs) {
+      // 4. Procesar archivos en paralelo (solo los que están presentes)
+      const processingPromises = claimConfigs.map(async (config) => {
         const file = filesMap.get(config.filename);
         
         if (!file) {
           errors.push(`${config.filename}: File not provided`);
           this.logger.warn(`Archivo faltante: ${config.filename}`);
-          continue;
+          return { fieldname: config.fieldname, result: "", success: false };
         }
         
         try {
@@ -66,18 +72,34 @@ export class ClaimsService {
           // Llamar a OpenAI con reintentos
           const summary = await this.callOpenAIWithRetries(config.prompt, pdfText);
           
-          // Asignar resultado
-          result[config.fieldname] = summary;
-          processedCount++;
-          
           this.logger.log(`Procesado exitosamente: ${config.filename} -> ${config.fieldname}`);
+          return { fieldname: config.fieldname, result: summary, success: true };
         } catch (error) {
           const errorMsg = `${config.filename}: ${error.message}`;
           errors.push(errorMsg);
           this.logger.error(errorMsg);
-          // Campo ya está inicializado como ""
+          return { fieldname: config.fieldname, result: "", success: false };
         }
-      }
+      });
+
+      // Esperar a que todos los procesamientos terminen
+      const results = await Promise.allSettled(processingPromises);
+      let processedCount = 0;
+
+      // Procesar resultados
+      results.forEach((promiseResult, index) => {
+        if (promiseResult.status === 'fulfilled') {
+          const { fieldname, result: summary, success } = promiseResult.value;
+          result[fieldname] = summary;
+          if (success) processedCount++;
+        } else {
+          // Error en la promesa misma
+          const config = claimConfigs[index];
+          this.logger.error(`Error crítico procesando ${config.filename}:`, promiseResult.reason);
+          errors.push(`${config.filename}: Error crítico en procesamiento`);
+          result[config.fieldname] = "";
+        }
+      });
       
       const processingTime = Date.now() - startTime;
       
@@ -122,12 +144,19 @@ export class ClaimsService {
   }
 
   private async getClaimConfigs(): Promise<ClaimExtract[]> {
-    if (!this.claimConfigsCache) {
+    // Intentar obtener del cache primero
+    let configs = this.cacheService.get<ClaimExtract[]>(ClaimsService.CACHE_KEY_CONFIGS);
+    
+    if (!configs) {
       this.logger.log('Cargando configuraciones de la base de datos');
-      this.claimConfigsCache = await this.claimExtractRepository.find();
-      this.logger.log(`Configuraciones cargadas: ${this.claimConfigsCache.length}`);
+      configs = await this.claimExtractRepository.find();
+      this.logger.log(`Configuraciones cargadas: ${configs.length}`);
+      
+      // Guardar en cache por 5 minutos
+      this.cacheService.set(ClaimsService.CACHE_KEY_CONFIGS, configs, 5 * 60 * 1000);
     }
-    return this.claimConfigsCache;
+    
+    return configs;
   }
 
   async getHealthCheck(): Promise<HealthCheckResponse> {

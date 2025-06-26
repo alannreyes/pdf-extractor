@@ -12,10 +12,14 @@ async function bootstrap() {
     transform: true,
   }));
 
-  // Configurar CORS si es necesario
+  // Configurar CORS de forma segura
   app.enableCors({
-    origin: true,
+    origin: process.env.NODE_ENV === 'production' 
+      ? ['https://yourdomain.com'] // Cambiar por dominio real en producción
+      : true, // Permitir cualquier origen en desarrollo
     credentials: true,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   // Configurar prefijo global para API

@@ -2,8 +2,11 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { MulterModule } from '@nestjs/platform-express';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { databaseConfig } from './config/database.config';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 @Module({
   imports: [
@@ -37,6 +40,17 @@ import { databaseConfig } from './config/database.config';
     ClaimsModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    // Filtro global de excepciones
+    {
+      provide: APP_FILTER,
+      useClass: HttpExceptionFilter,
+    },
+    // Interceptor global de logging
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LoggingInterceptor,
+    },
+  ],
 })
 export class AppModule {} 

@@ -6,10 +6,12 @@ import {
   UploadedFiles, 
   HttpException, 
   HttpStatus,
-  Logger 
+  Logger,
+  UsePipes
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ClaimsService } from './claims.service';
+import { FileValidationPipe } from '../../common/validators/file-validation.pipe';
 import { 
   ProcessClaimsResponse, 
   HealthCheckResponse, 
@@ -25,34 +27,14 @@ export class ClaimsController {
 
   @Post('process-claims')
   @UseInterceptors(FilesInterceptor('files', 3))
+  @UsePipes(new FileValidationPipe())
   async processClaimsFiles(
     @UploadedFiles() files: Express.Multer.File[] = []
   ): Promise<ProcessClaimsResponse | ErrorResponse> {
     try {
       this.logger.log(`Recibida request con ${files.length} archivos`);
       
-      // Validar archivos si existen
-      if (files.length > 0) {
-        for (const file of files) {
-          // Validar MIME type
-          if (file.mimetype !== 'application/pdf') {
-            throw new HttpException(
-              `Archivo ${file.originalname} no es un PDF válido`,
-              HttpStatus.BAD_REQUEST
-            );
-          }
-          
-          // Validar tamaño (10MB)
-          const maxSize = parseInt(process.env.MAX_FILE_SIZE) || 10485760;
-          if (file.size > maxSize) {
-            throw new HttpException(
-              `Archivo ${file.originalname} excede el tamaño máximo permitido`,
-              HttpStatus.BAD_REQUEST
-            );
-          }
-        }
-      }
-
+      // Las validaciones de archivos se manejan en FileValidationPipe
       return await this.claimsService.processClaimsFiles(files);
       
     } catch (error) {

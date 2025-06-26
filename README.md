@@ -7,9 +7,14 @@ Backend en NestJS que procesa archivos PDF usando OpenAI GPT-4.1 Mini según con
 - ✅ Procesamiento de archivos PDF (0-3 archivos por request)
 - ✅ Integración con OpenAI GPT-4.1 Mini (configurable)
 - ✅ Conexión a base de datos MySQL existente
-- ✅ Manejo robusto de errores
-- ✅ Logging detallado
+- ✅ Manejo robusto de errores con filtros globales
+- ✅ Logging detallado con interceptores
 - ✅ API REST con 3 endpoints
+- ✅ **Procesamiento paralelo** de archivos para mejor rendimiento
+- ✅ **Cache inteligente** para consultas de base de datos
+- ✅ **Validación avanzada** de archivos con sanitización
+- ✅ **Configuración de seguridad** CORS y validaciones
+- ✅ **Limpieza automática** de memoria y buffers
 
 ## 📋 Endpoints
 
