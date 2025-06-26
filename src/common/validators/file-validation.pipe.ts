@@ -9,7 +9,7 @@ import {
 @Injectable()
 export class FileValidationPipe implements PipeTransform {
   private readonly logger = new Logger(FileValidationPipe.name);
-  private readonly maxFileSize = parseInt(process.env.MAX_FILE_SIZE) || 10485760; // 10MB
+  private readonly maxFileSize = parseInt(process.env.MAX_FILE_SIZE) || 10485760; // 10MB por defecto
   private readonly allowedMimeTypes = ['application/pdf'];
   private readonly allowedExtensions = ['.pdf'];
 

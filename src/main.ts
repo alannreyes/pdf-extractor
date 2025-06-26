@@ -1,8 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { EnvValidation } from './config/env-validation';
 
 async function bootstrap() {
+  // Validar variables de entorno al iniciar
+  EnvValidation.validate();
   const app = await NestFactory.create(AppModule);
   
   // Configurar validación global
@@ -25,7 +28,7 @@ async function bootstrap() {
   // Configurar prefijo global para API
   app.setGlobalPrefix('api');
 
-  const port = process.env.PORT || 3000;
+  const port = parseInt(process.env.PORT) || 5010; // Puerto por defecto 5010
   await app.listen(port);
   
   console.log(`🚀 Aplicación iniciada en: http://localhost:${port}/api`);
