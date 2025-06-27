@@ -27,13 +27,10 @@ export class LoggingInterceptor implements NestInterceptor {
       `→ ${method} ${url} - IP: ${ip} - User-Agent: ${userAgent}`
     );
 
-    // Log de archivos si existen
-    if (request.files && Array.isArray(request.files)) {
-      const files = request.files as Express.Multer.File[];
-      if (files.length > 0) {
-        const fileInfo = files.map(f => `${f.originalname} (${f.size} bytes)`).join(', ');
-        this.logger.log(`📁 Archivos recibidos: ${fileInfo}`);
-      }
+    // Log de archivo si existe (formato individual)
+    if (request.file) {
+      const file = request.file as Express.Multer.File;
+      this.logger.log(`📁 Archivo recibido: ${file.originalname} (${file.size} bytes)`);
     }
 
     return next.handle().pipe(
@@ -48,10 +45,11 @@ export class LoggingInterceptor implements NestInterceptor {
             `← ${method} ${url} ${statusCode} - ${duration}ms`
           );
 
-          // Log adicional para endpoint principal (formato consolidado)
-          if (url.includes('process-claims') && data?.processing_stats) {
+          // Log adicional para endpoint principal (formato individual)
+          if (url.includes('process-claims') && data?.filename) {
+            const status = data.success ? '✅ Éxito' : '❌ Error';
             this.logger.log(
-              `📊 Procesamiento consolidado: ${data.processing_stats.successful_extractions}/${data.processing_stats.files_processed} archivos exitosos en ${data.processing_stats.total_time_ms}ms`
+              `📊 Procesamiento individual: ${status} - ${data.filename} en ${data.processing_time_ms}ms`
             );
           }
         },

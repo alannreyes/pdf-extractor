@@ -6,11 +6,10 @@ import { OpenAIService } from './services/openai.service';
 import { PdfParserService } from './services/pdf-parser.service';
 import { CacheService } from './services/cache.service';
 import { 
-  ProcessClaimsResponse, 
-  ConsolidatedSummaries,
-  ProcessingStats,
+  ProcessSingleFileResponse, 
   HealthCheckResponse, 
-  ClaimsConfigResponse 
+  ClaimsConfigResponse, 
+  ErrorResponse 
 } from './dto/process-claims-response.dto';
 
 @Injectable()
@@ -24,151 +23,92 @@ export class ClaimsService {
     private readonly openaiService: OpenAIService,
     private readonly pdfParserService: PdfParserService,
     private readonly cacheService: CacheService,
-  ) {
-    // Iniciar limpieza periódica del cache
-    setInterval(() => {
-      this.cacheService.cleanup();
-    }, 60000); // Cada minuto
-  }
+  ) {}
 
-  async processClaimsFiles(files: Express.Multer.File[]): Promise<ProcessClaimsResponse> {
+  // ✅ MÉTODO SIMPLIFICADO: Procesar UN solo archivo
+  async processSingleFile(file: Express.Multer.File): Promise<ProcessSingleFileResponse> {
     const startTime = Date.now();
-    const errors: string[] = [];
+    const timestamp = new Date().toISOString();
     
-    this.logger.log(`🚀 Iniciando procesamiento consolidado de ${files.length} archivos`);
+    this.logger.log(`🚀 Procesando archivo individual: ${file.originalname}`);
 
     try {
-      // 1. Obtener configuración de BD (con cache)
+      // 1. Obtener configuración de BD
       const claimConfigs = await this.getClaimConfigs();
       
-      // 2. Crear mapa de archivos recibidos
-      const filesMap = new Map(files.map(f => [f.originalname, f]));
-      this.logger.log(`📁 Archivos recibidos: ${Array.from(filesMap.keys()).join(', ')}`);
+      // 2. Buscar configuración para este archivo específico
+      const config = claimConfigs.find(c => c.filename === file.originalname);
       
-      // 3. Inicializar summaries consolidados
-      const summaries: ConsolidatedSummaries = {
-        claim_acknowledgment: "",
-        coverage_determination: "",
-        demand_letter: ""
-      };
-      
-      // 4. Mapeo de archivos a campos consolidados
-      const fileToFieldMap = {
-        'CLAIM_ACK_LETTER.pdf': 'claim_acknowledgment',
-        'COVERAGE_DETERMINATION.pdf': 'coverage_determination', 
-        'DEMAND_LETTER.pdf': 'demand_letter'
-      };
-      
-      // 5. Identificar archivos presentes vs faltantes
-      const presentFiles = claimConfigs.filter(config => filesMap.has(config.filename));
-      const missingFiles = claimConfigs.filter(config => !filesMap.has(config.filename));
-      
-      if (missingFiles.length > 0) {
-        this.logger.log(`📄 Archivos omitidos (no proporcionados): ${missingFiles.map(c => c.filename).join(', ')}`);
-      }
-      
-      if (presentFiles.length > 0) {
-        this.logger.log(`🔄 Procesando archivos: ${presentFiles.map(c => c.filename).join(', ')}`);
-      }
-      
-      // 6. Procesar archivos en paralelo (SOLO los que están presentes)
-      const processingPromises = presentFiles.map(async (config) => {
-          const file = filesMap.get(config.filename);
-          const consolidatedField = fileToFieldMap[config.filename];
-          
-          // Ya sabemos que el archivo existe por el filter anterior
+      if (!config) {
+        const processingTime = Date.now() - startTime;
+        this.logger.warn(`❌ Archivo no configurado: ${file.originalname}`);
         
-        const fileStartTime = Date.now();
+        return {
+          success: false,
+          timestamp,
+          filename: file.originalname,
+          fieldname: '',
+          summary: '',
+          processing_time_ms: processingTime,
+          error: `Archivo ${file.originalname} no está configurado en la base de datos`
+        };
+      }
+
+      // 3. Procesar el archivo
+      try {
+        // Extraer texto del PDF
+        const pdfText = await this.pdfParserService.extractText(file.buffer);
         
-        try {
-          // Extraer texto del PDF
-          const pdfText = await this.pdfParserService.extractText(file.buffer);
-          
-          // Verificar que se extrajo texto
-          if (!pdfText || pdfText.trim().length === 0) {
-            throw new Error('No se pudo extraer texto del PDF');
-          }
-          
-          // Llamar a OpenAI con reintentos
-          const summary = await this.callOpenAIWithRetries(config.prompt, pdfText);
-          
-          const fileProcessingTime = Date.now() - fileStartTime;
-          
-          this.logger.log(`✅ Procesado exitosamente: ${config.filename} (${fileProcessingTime}ms)`);
-          return { 
-            filename: config.filename,
-            fieldname: consolidatedField, 
-            result: summary, 
-            success: true,
-            processingTime: fileProcessingTime
-          };
-        } catch (error) {
-          const errorMsg = `❌ ${config.filename}: ${error.message}`;
-          errors.push(errorMsg);
-          this.logger.error(errorMsg);
-          return { 
-            filename: config.filename,
-            fieldname: consolidatedField, 
-            result: "", 
-            success: false,
-            processingTime: Date.now() - fileStartTime
-          };
+        if (!pdfText || pdfText.trim().length === 0) {
+          throw new Error('No se pudo extraer texto del PDF');
         }
-      });
-
-      // Esperar a que todos los procesamientos terminen
-      const results = await Promise.allSettled(processingPromises);
-      let successfulExtractions = 0;
-      let totalFileTime = 0;
-
-      // Procesar resultados y consolidar
-      results.forEach((promiseResult, index) => {
-        if (promiseResult.status === 'fulfilled') {
-          const { fieldname, result: summary, success, processingTime } = promiseResult.value;
-          
-          if (fieldname && summaries.hasOwnProperty(fieldname)) {
-            summaries[fieldname] = summary;
-          }
-          
-          if (success) {
-            successfulExtractions++;
-          }
-          
-          totalFileTime += processingTime;
-        } else {
-          // Error en la promesa misma - USAR presentFiles[index] en lugar de claimConfigs[index]
-          const config = presentFiles[index]; // ✅ CORREGIDO: Usar el índice correcto
-          this.logger.error(`💥 Error crítico procesando ${config.filename}:`, promiseResult.reason);
-          errors.push(`💥 ${config.filename}: Error crítico en procesamiento`);
-        }
-      });
-      
-      const totalProcessingTime = Date.now() - startTime;
-      const averageTimePerFile = claimConfigs.length > 0 ? Math.round(totalFileTime / claimConfigs.length) : 0;
-      
-      // Estadísticas consolidadas (solo archivos procesados)
-      const filesProcessed = results.length; // Solo los archivos que se intentaron procesar
-      const processingStats: ProcessingStats = {
-        files_processed: filesProcessed,
-        total_time_ms: totalProcessingTime,
-        average_time_per_file: filesProcessed > 0 ? Math.round(totalFileTime / filesProcessed) : 0,
-        successful_extractions: successfulExtractions,
-        failed_extractions: filesProcessed - successfulExtractions
-      };
-      
-      this.logger.log(`🎉 Procesamiento consolidado completado en ${totalProcessingTime}ms. Éxitos: ${successfulExtractions}/${filesProcessed}`);
-      
-      return {
-        success: true,
-        timestamp: new Date().toISOString(),
-        summaries,
-        processing_stats: processingStats,
-        errors: errors.length > 0 ? errors : undefined
-      };
+        
+        // Llamar a OpenAI con reintentos
+        const summary = await this.callOpenAIWithRetries(config.prompt, pdfText);
+        
+        const processingTime = Date.now() - startTime;
+        
+        this.logger.log(`✅ Procesado exitosamente: ${file.originalname} (${processingTime}ms)`);
+        
+        return {
+          success: true,
+          timestamp,
+          filename: file.originalname,
+          fieldname: config.fieldname,
+          summary,
+          processing_time_ms: processingTime
+        };
+        
+      } catch (error) {
+        const processingTime = Date.now() - startTime;
+        const errorMsg = `Error procesando ${file.originalname}: ${error.message}`;
+        
+        this.logger.error(`❌ ${errorMsg}`);
+        
+        return {
+          success: false,
+          timestamp,
+          filename: file.originalname,
+          fieldname: config.fieldname,
+          summary: '',
+          processing_time_ms: processingTime,
+          error: error.message
+        };
+      }
       
     } catch (error) {
+      const processingTime = Date.now() - startTime;
       this.logger.error('💥 Error crítico en procesamiento:', error.message);
-      throw error; // Esto resultará en Error 500
+      
+      return {
+        success: false,
+        timestamp,
+        filename: file.originalname,
+        fieldname: '',
+        summary: '',
+        processing_time_ms: processingTime,
+        error: 'Error crítico del sistema'
+      };
     }
   }
 
@@ -184,7 +124,6 @@ export class ClaimsService {
         this.logger.warn(`Intento ${attempt} falló para OpenAI: ${error.message}`);
         
         if (attempt <= maxRetries) {
-          // Esperar antes del siguiente intento
           await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
         }
       }
@@ -194,7 +133,6 @@ export class ClaimsService {
   }
 
   private async getClaimConfigs(): Promise<ClaimExtract[]> {
-    // Intentar obtener del cache primero
     let configs = this.cacheService.get<ClaimExtract[]>(ClaimsService.CACHE_KEY_CONFIGS);
     
     if (!configs) {
@@ -202,7 +140,6 @@ export class ClaimsService {
       configs = await this.claimExtractRepository.find();
       this.logger.log(`Configuraciones cargadas: ${configs.length}`);
       
-      // Guardar en cache por 5 minutos
       this.cacheService.set(ClaimsService.CACHE_KEY_CONFIGS, configs, 5 * 60 * 1000);
     }
     
@@ -211,7 +148,6 @@ export class ClaimsService {
 
   async getHealthCheck(): Promise<HealthCheckResponse> {
     try {
-      // Verificar conexión a BD
       await this.claimExtractRepository.count();
       
       return {

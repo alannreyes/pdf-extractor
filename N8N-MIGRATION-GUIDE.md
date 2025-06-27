@@ -1,130 +1,134 @@
-# 🔄 Guía de Migración N8N - Formato Consolidado
+# 🔄 Guía API Simplificada - Respuestas Individuales
 
 ## ✨ ¿Qué Cambió?
 
-La API ahora retorna un **formato consolidado más limpio** en lugar de respuestas individuales:
+La API ahora está **SIMPLIFICADA** para procesar **UN archivo a la vez** y devolver **respuestas individuales**:
 
-### ❌ Formato Anterior (Complejo)
-```json
-{
-  "success": true,
-  "data": {
-    "claim_ack_letter_summary": "...",
-    "cov_det_summary": "...",
-    "demand_letter_summary": "..."
-  },
-  "metadata": {
-    "processed_files": 3,
-    "total_expected": 3,
-    "processing_time_ms": 8750
-  }
-}
-```
-
-### ✅ Formato Nuevo (Consolidado)
+### ✅ Formato Nuevo (Individual y Simple)
 ```json
 {
   "success": true,
   "timestamp": "2025-01-26T21:30:45.123Z",
-  "summaries": {
-    "claim_acknowledgment": "...",
-    "coverage_determination": "...",
-    "demand_letter": "..."
-  },
-  "processing_stats": {
-    "files_processed": 3,
-    "total_time_ms": 8750,
-    "average_time_per_file": 2917,
-    "successful_extractions": 3,
-    "failed_extractions": 0
-  }
+  "filename": "CLAIM_ACK_LETTER.pdf",
+  "fieldname": "claim_ack_letter_summary",
+  "summary": "On November 4, 2024, Defendant acknowledged the claim and assigned the adjustment of the claim to Christi Manly...",
+  "processing_time_ms": 2737
 }
 ```
 
-## 🛠️ Actualización del Flujo N8N
-
-### Opción 1: Usar Directamente (Recomendado)
-Ya no necesitas Function Node para consolidar. Usa directamente:
-
-```javascript
-// Acceder a los summaries
-const claimAck = $json.summaries.claim_acknowledgment;
-const covDet = $json.summaries.coverage_determination;
-const demandLetter = $json.summaries.demand_letter;
-
-// Estadísticas disponibles
-const stats = $json.processing_stats;
-const totalTime = stats.total_time_ms;
-const avgTime = stats.average_time_per_file;
+### ❌ Formato de Error Individual
+```json
+{
+  "success": false,
+  "timestamp": "2025-01-26T21:30:45.123Z",
+  "filename": "UNKNOWN_FILE.pdf",
+  "fieldname": "",
+  "summary": "",
+  "processing_time_ms": 150,
+  "error": "Archivo UNKNOWN_FILE.pdf no está configurado en la base de datos"
+}
 ```
 
-### Opción 2: Mantener Compatibilidad
-Si quieres mantener el formato anterior, agrega un Function Node:
-
-```javascript
-// Convertir nuevo formato a formato legacy
-return {
-  json: {
-    success: $json.success,
-    data: {
-      claim_ack_letter_summary: $json.summaries.claim_acknowledgment,
-      cov_det_summary: $json.summaries.coverage_determination,
-      demand_letter_summary: $json.summaries.demand_letter
-    },
-    metadata: {
-      processed_files: $json.processing_stats.files_processed,
-      total_expected: 3,
-      processing_time_ms: $json.processing_stats.total_time_ms
-    }
-  }
-};
-```
-
-## 🎯 Ventajas del Nuevo Formato
-
-1. **✅ Más Limpio**: Nombres de campos más claros
-2. **✅ Más Información**: Estadísticas detalladas de procesamiento
-3. **✅ Timestamp**: Marca de tiempo de procesamiento
-4. **✅ Mejor Estructura**: Agrupación lógica de datos
-5. **✅ Extensible**: Fácil agregar nuevos campos
-
-## 🔧 Configuración N8N Actualizada
+## 🛠️ Configuración N8N Actualizada
 
 ### HTTP Request Node
 - **URL**: `http://automate_extractor:5010/api/process-claims`
 - **Method**: POST
 - **Body Content Type**: Form-Data
-- **Parameter Name**: `files`
-- **Type**: `n8n Binary Data`
+- **Parameter Name**: `file` (singular, no `files`)
+- **Type**: `n8n Binary File`
 - **Input Data Field Name**: `data`
 
-### Uso en Nodos Siguientes
-```javascript
-// Ejemplo: Enviar solo el summary de claim acknowledgment
-const summary = $json.summaries.claim_acknowledgment;
+### ✅ Ventajas del Formato Individual
 
-// Ejemplo: Crear respuesta completa
+1. **🚀 Más Simple**: Una petición = Una respuesta
+2. **🔄 Compatible con N8N**: Funciona perfecto con el flujo actual
+3. **📊 Respuesta Directa**: Sin consolidación compleja
+4. **⚡ Más Rápido**: Sin lógica de agrupación
+5. **🐛 Menos Errores**: Lógica más simple = menos bugs
+
+## 📋 Cambios en el Endpoint
+
+### Antes (Múltiples archivos)
+```bash
+curl -X POST http://localhost:5010/api/process-claims \
+  -F "files=@CLAIM_ACK_LETTER.pdf" \
+  -F "files=@COVERAGE_DETERMINATION.pdf" \
+  -F "files=@DEMAND_LETTER.pdf"
+```
+
+### Ahora (Un archivo)
+```bash
+curl -X POST http://localhost:5010/api/process-claims \
+  -F "file=@CLAIM_ACK_LETTER.pdf"
+```
+
+## 🎯 Uso en N8N
+
+### Ejemplo de Uso en Function Node
+```javascript
+// Acceder a la respuesta individual
+const filename = $json.filename;
+const summary = $json.summary;
+const success = $json.success;
+const processingTime = $json.processing_time_ms;
+
+// Crear respuesta personalizada
 const response = {
-  timestamp: $json.timestamp,
-  claim_summary: $json.summaries.claim_acknowledgment,
-  coverage_summary: $json.summaries.coverage_determination,
-  demand_summary: $json.summaries.demand_letter,
-  processing_time: $json.processing_stats.total_time_ms + "ms",
-  success_rate: `${$json.processing_stats.successful_extractions}/${$json.processing_stats.files_processed}`
+  file: filename,
+  content: summary,
+  processed_successfully: success,
+  time_taken: processingTime + "ms"
+};
+
+return { json: response };
+```
+
+### Manejo de Errores
+```javascript
+if (!$json.success) {
+  // Archivo falló
+  const errorMessage = $json.error || 'Error desconocido';
+  return { 
+    json: { 
+      error: true, 
+      message: errorMessage,
+      filename: $json.filename 
+    } 
+  };
+}
+
+// Archivo procesado exitosamente
+return { 
+  json: { 
+    success: true, 
+    summary: $json.summary,
+    filename: $json.filename
+  } 
 };
 ```
 
-## 🚀 ¿Cuándo Actualizar?
+## 🔧 Configuración Recomendada en N8N
 
-- **Inmediatamente**: Si quieres el formato más limpio
-- **Gradualmente**: Usar Opción 2 para mantener compatibilidad
-- **Automático**: La API ya está devolviendo el nuevo formato
+1. **Nodo "Descargar Archivo"**: Mantener igual
+2. **Nodo "PDF Extract"**: 
+   - Cambiar `files` por `file`
+   - Una ejecución por archivo (N8N lo hace automáticamente)
+3. **Nodos Siguientes**: Procesar respuesta individual
 
-## 📞 Soporte
+## 📞 Endpoints Disponibles
 
-Si tienes problemas con la migración, verifica:
-1. La URL de la API es correcta
-2. Los nombres de campos han cambiado
-3. La estructura de respuesta es diferente
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/api/process-claims` | POST | Procesa UN archivo PDF |
+| `/api/health` | GET | Estado del servicio |
+| `/api/claims/config` | GET | Archivos esperados |
 
-¡El nuevo formato es mucho más fácil de usar! 🎉 
+## 🚀 Migración Inmediata
+
+**No necesitas cambiar nada en N8N** - el flujo actual funcionará perfectamente porque:
+- N8N ya envía archivos individuales
+- La API ahora los procesa individualmente
+- Cada archivo recibe su propia respuesta
+
+¡Es la solución perfecta! 🎉 

@@ -13,27 +13,21 @@ export class FileValidationPipe implements PipeTransform {
   private readonly allowedMimeTypes = ['application/pdf'];
   private readonly allowedExtensions = ['.pdf'];
 
-  transform(files: Express.Multer.File[], metadata: ArgumentMetadata): Express.Multer.File[] {
-    if (!files || !Array.isArray(files)) {
-      return files;
+  // ✅ SIMPLIFICADO: Validar UN solo archivo
+  transform(file: Express.Multer.File, metadata: ArgumentMetadata): Express.Multer.File {
+    // Si no hay archivo, devolver null (se maneja en el controlador)
+    if (!file) {
+      return null;
     }
 
-    // Máximo 3 archivos
-    if (files.length > 3) {
-      throw new BadRequestException('Máximo 3 archivos permitidos');
-    }
-
-    files.forEach((file, index) => {
-      this.validateFile(file, index);
-    });
-
-    return files;
+    this.validateFile(file);
+    return file;
   }
 
-  private validateFile(file: Express.Multer.File, index: number): void {
+  private validateFile(file: Express.Multer.File): void {
     // Validar que el archivo existe
     if (!file) {
-      throw new BadRequestException(`Archivo en posición ${index} está vacío`);
+      throw new BadRequestException('Archivo está vacío');
     }
 
     // Sanitizar nombre de archivo
@@ -76,12 +70,12 @@ export class FileValidationPipe implements PipeTransform {
   }
 
   private sanitizeFilename(filename: string): string {
-    // Remover caracteres peligrosos y mantener solo letras, números, puntos, guiones y guiones bajos
-    return filename.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    // Remover caracteres peligrosos
+    return filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
   }
 
   private getFileExtension(filename: string): string {
     const lastDotIndex = filename.lastIndexOf('.');
-    return lastDotIndex === -1 ? '' : filename.slice(lastDotIndex);
+    return lastDotIndex !== -1 ? filename.substring(lastDotIndex) : '';
   }
 } 

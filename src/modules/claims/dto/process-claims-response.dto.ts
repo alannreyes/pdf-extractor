@@ -1,40 +1,23 @@
-// Formato consolidado y limpio
-export interface ConsolidatedSummaries {
-  claim_acknowledgment: string;
-  coverage_determination: string;
-  demand_letter: string;
-}
-
-export interface ProcessingStats {
-  files_processed: number;
-  total_time_ms: number;
-  average_time_per_file: number;
-  successful_extractions: number;
-  failed_extractions: number;
-}
-
-export interface ProcessClaimsResponse {
+// ✅ RESPUESTA INDIVIDUAL SIMPLIFICADA
+export interface ProcessSingleFileResponse {
   success: boolean;
   timestamp: string;
-  summaries: ConsolidatedSummaries;
-  processing_stats: ProcessingStats;
-  errors?: string[];
-}
-
-// Mantener interfaces legacy para compatibilidad
-export interface ProcessClaimsData {
-  claim_ack_letter_summary: string;
-  cov_det_summary: string;
-  demand_letter_summary: string;
-}
-
-export interface ProcessClaimsMetadata {
-  processed_files: number;
-  total_expected: number;
+  filename: string;
+  fieldname: string;
+  summary: string;
   processing_time_ms: number;
-  errors?: string[];
+  error?: string;
 }
 
+// ✅ RESPUESTA DE ERROR SIMPLE
+export interface ErrorResponse {
+  success: false;
+  error: string;
+  message: string;
+  timestamp: string;
+}
+
+// ✅ RESPUESTAS DE UTILIDAD
 export interface HealthCheckResponse {
   status: string;
   db: string;
@@ -44,10 +27,4 @@ export interface HealthCheckResponse {
 export interface ClaimsConfigResponse {
   expected_files: string[];
   fields: string[];
-}
-
-export interface ErrorResponse {
-  success: false;
-  error: string;
-  message: string;
 } 
